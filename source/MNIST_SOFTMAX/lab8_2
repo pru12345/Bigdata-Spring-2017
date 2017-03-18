@@ -1,0 +1,76 @@
+import tensorflow as tf
+import numpy as np
+import pickle
+from sklearn.model_selection import train_test_split
+from tensorflow.contrib.session_bundle import exporter
+
+
+data_path = "/home/prudhvi/Desktop/source/MNIST_SOFTMAX/data_new/CIFAR-10/data_batch_1"
+fo = open(data_path, 'rb')
+fo.seek(0)
+dict_ = (pickle.load(fo,encoding='bytes'))
+l=np.array(dict_[b'labels'])
+d=np.array(dict_[b'data'])
+fo.close()
+trX,tstX,trY,tstY = train_test_split(d,l , test_size=0.33, random_state=42)
+target=np.zeros((6700,10))
+for i in range(0,len(target)-1):
+  x=trY[i]
+  target[i-1][x]=1
+
+print('-------------------------------------------')
+
+sess = tf.Session()# creates a session
+tf.logging.set_verbosity(tf.logging.INFO) #logging info
+x = tf.placeholder(tf.float32, [None, 3072],name='x')#each image in cifar 10 is 32*32*3 reshaped to 3072
+#-----------------------------------------------------------
+W = tf.Variable(tf.zeros([3072, 10]),name='W')
+b = tf.Variable(tf.zeros([10]),name='b')#output classes 10
+y = tf.nn.softmax(tf.matmul(x, W) +b,name='y')# classifier - softmax
+y_ = tf.placeholder(tf.float32, [None, 10],name='y_')
+tf.add_to_collection('variables',W)
+tf.add_to_collection('variables',b)
+
+cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=y, labels=y_))
+train_step = tf.train.AdamOptimizer(0.3).minimize(cross_entropy)
+
+# save summaries for visualization
+#------------------------------------------------------------------
+tf.summary.histogram('weights', W)
+tf.summary.histogram('max_weight', tf.reduce_max(W))
+tf.summary.histogram('bias', b)
+tf.summary.scalar('cross_entropy', cross_entropy)
+tf.summary.histogram('cross_hist', cross_entropy)
+
+# merge all summaries into one op
+merged=tf.summary.merge_all()
+trainwriter=tf.summary.FileWriter('data_new/model-cifar'+'/logs/train',sess.graph)
+#-------------------------------------------------------------------------
+init = tf.global_variables_initializer()
+sess.run(init)
+
+
+for i in range(0,10):
+ print(i)
+ for j in range (0,len(trX-1)):
+      trx = np.reshape(trX[i], (1, len(trX[i])))
+      Target = np.reshape(target[i], (1, len(target[i])))
+      summary, _ = sess.run([merged, train_step], feed_dict={x: trx, y_: Target})
+      trainwriter.add_summary(summary, i)
+
+
+export_path = 'data_new/model-cifar'
+print('Exporting trained model to', export_path)
+
+saver = tf.train.Saver(sharded=True)
+model_exporter = exporter.Exporter(saver)
+
+model_exporter.init(
+    sess.graph.as_graph_def(),
+    named_graph_signatures={
+        'inputs': exporter.generic_signature({'images': x}),
+        'outputs': exporter.generic_signature({'scores': y})})
+model_exporter.export(export_path, tf.constant(1), sess)
+
+#-----------------------------------------------------------------
+print('----------------------test --------------------')
